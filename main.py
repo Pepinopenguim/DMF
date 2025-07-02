@@ -9,19 +9,30 @@ class Model():
                 self.nodes = [] # (position, support)
                 self.point_loads = [] # (magnitude, position, angle)
                 self.loads = [] #
-                self.supports = []
+                self.supports = [] # position, support_type
                 self.materials = {
                         "E":2e11, # Pa
                         "I":10e-6, # m^4
                 }
         
         def set_length(self, new_length:float):
-                
-                try:
-                        self.length = int(new_length)
+                self.length = new_length
+                self.check_valid_supports()
+                return True
+        
+        def remove_last_support(self):
+                if self.supports: # check if not null
+                        self.supports.pop()
                         return True
-                except ValueError:
-                        return False
+                return False
+
+
+        def check_valid_supports(self):
+                for i, (pos, _) in enumerate(self.supports):
+                        if not 0 <= pos <= self.length:
+                                self.supports.pop(i)
+                                # removes supports when L is changed 
+
 
         def set_total_node_num(self, new_node_num:int):
                 try:
@@ -73,11 +84,18 @@ class Model():
                 return True
 
 class Pencil():
-        def __init__(self, view, width = 3, fill = "blue", line_color = "black"):
+        def __init__(self, view, width = 2, fill = "blue", line_color = "black"):
                 self.view = view
                 self.line_width = width
                 self.line_color = line_color
                 self.fill = fill
+
+                self.mapper = {
+                        "xy":self.draw_xy,
+                        "y":self.draw_y,
+                        "xyz":self.draw_xyz,
+                        "xz":self.draw_xz,
+                }
         
         def draw_angled_line(self, length, start_pos, angle_degrees = 0):
                 p1 = (int(start_pos[0] + length * np.cos(angle_degrees * np.pi / 180)), int(start_pos[1] - length * np.sin(angle_degrees * np.pi / 180)))
@@ -116,17 +134,17 @@ class Pencil():
 
                 p0 = (x0, y0)
                 
-                side = 2 * height / int(np.tan(np.pi / 3))
+                side = 2 * height / float(np.tan(np.pi / 3))
 
                 p1 = (x0 + side / 2, y0 + height)
                 p2 = (x0 - side / 2, y0 + height)
 
-                self.view.maincanvas.create_line(p0, p1, p2, p0, width = self.line_width, fill=self.line_color)
                 self.view.maincanvas.create_polygon(p0, p1, p2, p0, width = self.line_width, fill=self.fill)
+                self.view.maincanvas.create_line(p0, p1, p2, p0, width = self.line_width, fill=self.line_color)
 
                 # draw little lines :)
-                for i in np.linspace(p2[0], p1[0], 7)[1:-1]: # get 3 nums
-                        i = int(i)
+                for i in np.linspace(p2[0], p1[0], 5):
+                        
                         self.draw_angled_line(15, (i, y0 + height), 225)
         
         def draw_y(self, beam_position:float, height:float, canvas:tk.Canvas):
@@ -137,20 +155,20 @@ class Pencil():
 
                 p0 = (x0, y0)
                 
-                side = 2 * height // int(np.tan(np.pi / 3))
+                side = 2 * height / float(np.tan(np.pi / 3))
 
-                p1 = (x0 + side // 2, y0 + height)
-                p2 = (x0 - side // 2, y0 + height)
+                p1 = (x0 + side / 2, y0 + height)
+                p2 = (x0 - side / 2, y0 + height)
 
-                self.view.maincanvas.create_line(p0, p1, p2, p0, width = self.line_width, fill=self.line_color)
                 self.view.maincanvas.create_polygon(p0, p1, p2, p0, width = self.line_width, fill=self.fill)
+                self.view.maincanvas.create_line(p0, p1, p2, p0, width = self.line_width, fill=self.line_color)
 
                 # draw little circles :)
-                #self.draw_angled_line(abs(int(p2[0] - p1[0])), (p2[0], y0 + 1.2 * height))
+                
                 self.draw_circles_along_line(
                         start_pos=(p2[0], y0 + 1.2 * height),
                         end_pos=(p1[0], y0 + 1.2 * height),
-                        num_circles=6,
+                        num_circles=4,
                         width=self.line_width//1.5,
                         fill=self.fill
                 )
@@ -174,8 +192,8 @@ class Pencil():
                 else:
                         polygon_points = [(x0 - height/(2*ratio), y0 - height), (x0 - height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 - height)]
                         draw_lines = False 
-                self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
                 self.view.maincanvas.create_polygon(*polygon_points, width = self.line_width, fill=self.fill)
+                self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
 
                 match draw_lines:
                         case "left":
@@ -198,8 +216,8 @@ class Pencil():
                 if abs(beam_position) < episilon: # draw to the left
                         polygon_points = [p0, (x0, y0 - height), (x0 - height/ratio, y0 - height), (x0 - height/ratio, y0 + height), (x0, y0 + height), p0]
                 
-                        self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
                         self.view.maincanvas.create_polygon(*polygon_points, width = self.line_width, fill=self.fill)
+                        self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
 
                         self.draw_circles_along_line(
                                 start_pos=(x0 - 2 * height/ratio, y0 + height),
@@ -211,8 +229,8 @@ class Pencil():
                 elif abs(beam_position - beam_length) < episilon: # draw to the right
                         polygon_points = [p0, (x0, y0 - height), (x0 + height/ratio, y0 - height), (x0 + height/ratio, y0 + height), (x0, y0 + height), p0]
                         
-                        self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
                         self.view.maincanvas.create_polygon(*polygon_points, width = self.line_width, fill=self.fill)
+                        self.view.maincanvas.create_line(*polygon_points, width = self.line_width, fill=self.line_color)
 
                         self.draw_circles_along_line(
                                 start_pos=(x0 + 2 * height/ratio, y0 + height),
@@ -294,7 +312,7 @@ class View(tk.Tk):
                 len_entry.pack(fill="x", padx=5, pady=2)
                 ttk.Button(
                         self.control_frame, text="Set Length (m)",
-                        command=None # temp
+                        command=lambda: self.controller.set_length(self.len_var.get())
                 ).pack(pady=2)
 
         def supports_gui(self):
@@ -337,14 +355,22 @@ class View(tk.Tk):
                 ChkBtn2.pack(padx=5, pady=2, side="left")
                 ChkBtn3.pack(padx=5, pady=2, side="left")
 
+                sup_button_frame = ttk.Frame(self.control_frame)
+                sup_button_frame.pack(pady=5)
+
                 ttk.Button(
-                        self.control_frame,
+                        sup_button_frame,
                         text="Add Support",
                         command=lambda :self.controller.add_support(
                                 position=self.support_pos_strgvar.get(),
                                 support_type=self.Var1.get()*"x" + self.Var2.get()*"y" + self.Var3.get()*"z"
                         )
-                ).pack(pady=5)
+                ).pack(side="left", padx = 2)
+                ttk.Button(
+                        sup_button_frame,
+                        text="Remove Support",
+                        command=self.controller.remove_last_support        
+                ).pack(side="left", padx = 2)
 
         def loads_gui(self):
                 title_load_frame = ttk.Frame(self.control_frame, width=250)
@@ -393,7 +419,7 @@ class View(tk.Tk):
                 self.canvas_w, self.canvas_h = self.maincanvas.winfo_width(), self.maincanvas.winfo_height()
                 
 
-                self.beam_y = self.canvas_h // 2
+                self.beam_y = self.canvas_h // 3
 
                 self.canvas_padx = 50
 
@@ -401,16 +427,8 @@ class View(tk.Tk):
 
                 # draw supports
                 for support_pos, support_type in self.controller.model.supports:
-                        match support_type:
-                                case "xy":
-                                        self.pencil.draw_xy(support_pos, self.canvas_h//22, canvas=self.maincanvas)
-                                case "y":
-                                        self.pencil.draw_y(support_pos, self.canvas_h//22, canvas=self.maincanvas)
-                                case "xyz":
-                                        self.pencil.draw_xyz(support_pos, self.canvas_h//22, canvas=self.maincanvas)
-                                case "xz":
-                                        self.pencil.draw_xz(support_pos, self.canvas_h//22, canvas=self.maincanvas)
-
+                        self.pencil.mapper[support_type](support_pos, self.canvas_h//22, canvas=self.maincanvas)
+                        
                 
 
 
@@ -418,36 +436,61 @@ class Controller():
         def __init__(self):
                 self.model = Model()
                 self.view = View(self)
-
-                self.view.bind("<Configure>", self.on_resize)
         
         def update_display(self):
                 self.view.draw_beam()
+        
+        def remove_last_support(self):
+                if self.model.remove_last_support():
+                        self.update_display()
+                        return True
+                return False
+        
+        def set_length(self, new_length):
+                # check if its valid
+                try:
+                        new_length = float(new_length)
+                except ValueError:
+                        return False
+                
+                if self.model.set_length(new_length):
+                        self.update_display()
+                        print(True)
+                        return True
+                print(False)
+                return False
 
         def add_support(self, position, support_type):
+
                 # checks if position argument is valid
                 try:
                         position = float(position)
                 except ValueError:
                         return False
-                # checks if support_type is not empty
-                if support_type == "":
+                # checks if support_type valid
+                if support_type not in self.view.pencil.mapper:
+                        print("not yet supported")
                         return False
                 
-                print(position, support_type)
                 if self.model.add_support(position, support_type):
+
+                        # starttemp
+                        print("-"*10)
+                        for i in self.model.supports:
+                                print(i)
+                        print("-"*10)
+                        # endtemp
+
                         self.update_display()
                         return True
+                
+                
+                
                 return False
-
-        def set_length(self, new_length):
-                self.model.set_length()
 
         def run(self):
                 self.view.mainloop()
         
-        def on_resize(self, event):
-                self.update_display()
 
 
 
