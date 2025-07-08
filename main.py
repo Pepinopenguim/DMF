@@ -2,7 +2,6 @@
 import tkinter as tk
 import numpy as np
 from tkinter import ttk
-from bird_coords import bird_coords as BIRD_COORDS
 
 # This class holds the data for the beam simulation
 class Model():
