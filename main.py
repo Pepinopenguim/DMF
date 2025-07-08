@@ -13,7 +13,9 @@ class Model():
                 # Number of nodes for calculation
                 self.total_node_num = 30
                 # List to store node data (position, support)
-                self.nodes = [] 
+                # supports are defined as strings: e.g. "xyz", "xz", "xy"
+                # Where z is rotation 
+                self.nodes = []
 
                 # List to store point loads (magnitude, position, angle)
                 self.point_loads = []
