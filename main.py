@@ -2,7 +2,7 @@
 import tkinter as tk
 import numpy as np
 from tkinter import ttk
-from bird_coords import bird_coords
+from bird_coords import bird_coords as BIRD_COORDS
 
 # This class holds the data for the beam simulation
 class Model():
@@ -45,8 +45,6 @@ class Model():
         
         # Method to set a new length for the beam
         def set_length(self, new_length:float):
-                if new_length == self.length:
-                        return False
                 self.length = new_length
                 # Check if existing supports are still valid with the new length
                 self.check_valid_supports()
@@ -95,17 +93,8 @@ class Model():
 
         # Method to add a new support to the beam
         def add_support(self, position:float, support_type:str):
-
-                # Check if the position is within the beam's length
-                if 0 <= position <= self.length:
-                        for already_saved_position, _ in self.supports:
-                                # The program will not accept 2 supports too close together
-                                if abs(position - already_saved_position) < self.length / self.total_node_num:
-                                        return False 
-                        self.supports.append((position, support_type))
-                        
-                        return True
-                return False # Return false if position is not valid
+                self.supports.append((position, support_type))
+                return True
 
         # Method to add a concentrated (point) load
         def add_point_load(self, magnitude:float, position:float, angle:float = 90):
@@ -122,23 +111,8 @@ class Model():
         
         # Method to add a distributed load
         def add_loads(self, pos_limits:tuple, magnitude:float):
-                
-                # Check if the load positions are within the beam's length
-                for pos in pos_limits:
-                        if not 0 <= pos <= self.length:
-                                print("k1")
-                                return False
-                print(type(magnitude))
-                # Check if the magnitude is a valid number
-                if not isinstance(magnitude, (int, float)):
-                        print("k2")
-                        return False
 
                 pos0, pos1 = pos_limits
-                
-                # Invert values if the start position is after the end position
-                if pos0 > pos1:
-                        pos0, pos1 = pos1, pos0
 
                 self.loads.append(((pos0, pos1), magnitude))
                 self.order_of_efforts.append("load")
@@ -434,12 +408,7 @@ class Pencil():
                         fill = self.eff_fill, 
                         font = f"TkDefaultFont {int(height / 3)}"
                 )
-        
-        def draw_bird(self, topleft, size, canvas:tk.Canvas, color):
-                
-                bird_coords, eye_coords = bird_coords[:-4], bird_coords[-4:]
 
-                
 
 
                 
@@ -460,7 +429,6 @@ class View(tk.Tk):
                 self.view_solution:bool = False
 
                 # Set terminal variables
-                self.terminal_scroller_offset = 0
                 self.terminal_messages = []
 
                 self.start_gui()
@@ -510,21 +478,24 @@ class View(tk.Tk):
                 self.terminal_frame = ttk.Frame(self.left_frame)
                 self.terminal_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
-                self.terminal_canvas = tk.Canvas(self.terminal_frame, bg="#eeeeee", bd=2, relief="groove")
-                self.terminal_canvas.pack(fill="both", expand=True, padx=5)
-                self.terminal_canvas.bind_all("<MouseWheel>", self.on_mouse_wheel)
-
                 # Control Panel for user inputs
                 self.control_frame = tk.Frame(self.main_frame, width = 250)
                 self.control_frame.pack(side="right", fill="y", padx=5, pady=5)
+
+
                 
                 # Initial drawing of the beam and setup of control panel sections
+                self.terminal_gui()
                 self.draw_beam()
                 self.length_gui()
                 self.supports_gui()
                 self.loads_gui()
                 self.solve_gui()
 
+        def terminal_gui(self):
+                self.terminal_canvas = tk.Canvas(self.terminal_frame, bg="#eeeeee", bd=2, relief="groove")
+                self.terminal_canvas.pack(fill="both", expand=True, padx=5)
+                self.terminal_canvas.bind_all("<MouseWheel>", self.on_mouse_wheel)
 
         # Creates the GUI elements for setting the beam length
         def length_gui(self):
@@ -721,6 +692,8 @@ class View(tk.Tk):
                 self.terminal_messages.append(message)
 
         def draw_terminal(self):
+                self.terminal_canvas.yview_moveto(0.0)
+                
                 if not self.view_solution:
                         # clear canvas
                         self.terminal_canvas.delete("all")
@@ -805,6 +778,18 @@ class Controller():
 
                 # When the canvas is resized, call the update_display method
                 self.view.maincanvas.bind("<Configure>", self.update_display)
+
+        def add_terminal_message(self, message:str):
+                self.view.add_terminal_message(message)
+                self.update_display()
+
+        def test_float(self, var, var_name): # worked, var
+                try:
+                        var = float(var)
+                        return True, var
+                except (ValueError, TypeError):
+                        self.add_terminal_message(f"Error: Invalid value for {var_name}: '{var}'")
+                        return False, None
         
         # This method is called to refresh the drawing on the canvas
         def update_display(self, event=None):
@@ -831,75 +816,114 @@ class Controller():
         # Handles the "Set Length" button click
         def set_length(self, new_length):
                 # Validate the input
-                try:
-                        new_length = float(new_length)
-                except (ValueError, TypeError):
+                test, new_length = self.test_float(new_length, "Length")
+                
+                if not test:
+                        return False
+
+                if new_length == self.model.length:
+                        self.add_terminal_message(f"Error: Length of {new_length} already set")
+                        return False
+                
+                elif new_length <= 0:
+                        self.add_terminal_message(f"Error: Length must be greater than '0'!")
                         return False
                 
                 # If the model successfully sets the length, update the view
                 if self.model.set_length(new_length):
-                        self.view.add_terminal_message(f"New Length set to:{new_length}")
-                        self.update_display()
+                        self.add_terminal_message(f"New Length set to:{new_length}")
                         return True
                 return False
 
         # Handles the "Add Support" button click
         def add_support(self, position, support_type):
+                # Validate the position input is floatable               
+                test, position = self.test_float(position, "Position")
 
-                # Validate the position input
-                try:
-                        position = float(position)
-                except (ValueError, TypeError):
+                if not test:
                         return False
+                
+                # check if position is withing the beam's length
+                if not 0 <= position <= self.model.length:
+                        self.add_terminal_message(f"Error: Support position must be inside beam!")
+                        return False
+
+                # check if new support is too close to existing one
+                for already_saved_position, _ in self.model.supports:
+                        if abs(position - already_saved_position) <= self.model.length / self.model.total_node_num:
+                                        self.add_terminal_message(f"Error: Cannot add support too close to another one!")
+                                        return False
+                
                 # Check if the support type is valid/implemented
                 if support_type not in self.view.pencil.mapper:
-                        print("not yet supported")
+                        self.add_terminal_message(f"Error: Support kind '{support_type}' not yet implemented!")
                         return False
                 
                 # If the model successfully adds the support, update the view
                 if self.model.add_support(position, support_type):
-                        self.view.add_terminal_message(f"New support {support_type} added to:{position}")
-                        self.update_display()
+                        self.add_terminal_message(f"New support {support_type} added to:{position}")
                         return True
                 
                 return False
 
         # Handles the "Add Force" button click
         def add_effort(self, magnitude:float, position, angle:float = 90):
+                # test magnitude and angle         
+                test1, magnitude = self.test_float(magnitude, "Magnitude")
+                test2, angle = self.test_float(angle, "Angle")
+                
+                if not (test1 and test2):
+                        return False
+                
+                if magnitude == 0:
+                        self.add_terminal_message("Error: Magnitude cannot be '0'")
+                        return False
+
                 # Check if the position input is for a distributed load (e.g., "2;5")
                 if ";" in position:
-                        try:
-                                # Parse positions, magnitude, and angle
-                                pos0, pos1 = [float(i) for i in position.split(";")[:2]]
-                                magnitude = float(magnitude)
-                                angle = float(angle)
+                        pos0, pos1 = position.split(";")[:2]
 
-                        except (ValueError, TypeError):
+                        test0, pos0 = self.test_float(pos0, "Position 1")
+                        test1, pos1 = self.test_float(pos1, "Position 2")
+                        
+                        if not (test0 and test1):
                                 return False
+
+                        if pos1 < pos0:
+                                pos0, pos1 = pos1, pos0
+                        
+                        if (not 0 <= pos0 <= self.model.length) or (not 0 <= pos1 <= self.model.length):
+                                self.add_terminal_message("Error: Position must be inside beam!")
+                                return False
+                
                 # Otherwise, it's a point load
                 else:
-                        try:
-                                # Parse magnitude, angle, and position
-                                magnitude = float(magnitude)
-                                angle = float(angle)
-                                pos0 = float(position)
-                                pos1 = None
-                        except (ValueError, TypeError):
+                        test, pos0 = self.test_float(position, "Position")
+                        pos1 = None
+                        
+                        if not test:
                                 return False
+
+                        if not 0 <= pos0 <= self.model.length:
+                                self.add_terminal_message("Error: Position must be inside beam!")
+                                return False
+                        
+                        
         
                 # If pos1 is None, it's a point load
                 if pos1 is None:
                         # If the model adds the point load, update the display
                         if self.model.add_point_load(magnitude=magnitude, position=pos0, angle=angle):
-                                self.view.add_terminal_message(f"New force ({magnitude}>{angle}°) added to:{position}")
-                                self.update_display()
+                                if angle == 90:
+                                        self.add_terminal_message(f"New force {magnitude} added to: {position}")
+                                        return True
+                                self.add_terminal_message(f"New force ({magnitude}>{angle}°) added to: {position}")
                                 return True
                         return False
 
                 # If pos1 is valid, it's a distributed load
                 if self.model.add_loads(pos_limits=(pos0, pos1), magnitude=magnitude):
-                        self.view.add_terminal_message(f"New load ({magnitude}) added from {pos0} to {pos1}")
-                        self.update_display()
+                        self.add_terminal_message(f"New load {magnitude} added from {pos0} to {pos1}")
                         return True
                 return False
 
