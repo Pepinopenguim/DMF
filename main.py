@@ -85,11 +85,8 @@ class Model():
 
         # Method to set the total number of nodes for calculations
         def set_total_node_num(self, new_node_num:int):
-                try:
-                        self.total_node_num = int(new_node_num)
-                        return True
-                except (ValueError, TypeError):
-                        return False
+                self.total_node_num = new_node_num
+                return True
 
         # Method to add a new support to the beam
         def add_support(self, position:float, support_type:str):
@@ -650,6 +647,13 @@ class View(tk.Tk):
         def solve_gui(self):
                 self.create_separator(frame = self.control_frame, text=None, pady=4)
 
+                # entry for num of nodes
+                line1 = tk.Frame(self.control_frame)
+                line1.pack(pady=3)
+                ttk.Label(line1, text="N° Nodes", font=self.font, width=10).pack(side="left", padx=2)
+                self.nodes_strgvar = tk.StringVar(value="30")
+                ttk.Entry(line1, textvariable=self.nodes_strgvar, width = 12).pack(side="left")
+
                 # Solve button (command not yet implemented)
                 solve_button = ttk.Button(self.control_frame, text="Solve", command=self.controller.save_button_clicked)
                 solve_button.pack(pady=2)
@@ -783,9 +787,12 @@ class Controller():
                 self.view.add_terminal_message(message)
                 self.update_display()
 
-        def test_float(self, var, var_name): # worked, var
+        def test_float(self, var, var_name="input", test_int = False): # worked, var
                 try:
-                        var = float(var)
+                        if not test_int:
+                                var = float(var)
+                                return True, var
+                        var = int(var)
                         return True, var
                 except (ValueError, TypeError):
                         self.add_terminal_message(f"Error: Invalid value for {var_name}: '{var}'")
@@ -795,12 +802,25 @@ class Controller():
         def update_display(self, event=None):
                 self.view.update_display()
         
+        def set_total_node_num(self, new_node_num):
+                test, new_node_num = self.test_float(new_node_num, "N° Nodes", test_int = True)
+        
+                if not test:
+                        return False
+
+                if new_node_num == self.model.total_node_num:
+                        return False
+                
+                if self.model.set_total_node_num(new_node_num):
+                        self.add_terminal_message(f"N° Nodes set to {new_node_num}")
+                        return True
+                return False
+        
         # Handles the "Remove Support" button click
         def remove_last_support(self):
                 # If the model successfully removes a support, update the view
                 if self.model.remove_last_support():
-                        self.view.add_terminal_message("Support Removed.")
-                        self.update_display()
+                        self.add_terminal_message("Support Removed.")
                         return True
                 return False
 
@@ -928,6 +948,7 @@ class Controller():
                 return False
 
         def save_button_clicked(self):
+                self.set_total_node_num(self.view.nodes_strgvar.get())
                 self.view.after_solve_gui()
                 self.update_display()
 
