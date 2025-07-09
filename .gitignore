@@ -1,2 +1,6 @@
 env
 __pycache__
+data.py
+temp.py
+temp.txt
+source.txt
