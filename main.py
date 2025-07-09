@@ -34,6 +34,8 @@ class Model():
                         "I":10e-6, # Moment of inertia in m^4
                 }
 
+                self.solved = False
+
         # Method to find the maximum force applied to the beam
         def get_max_force(self):
                 max_force = 0
@@ -48,24 +50,39 @@ class Model():
                 return max_force
         
         # Method to set a new length for the beam
-        def set_length(self, new_length:float):
+        def set_properties(self, new_length:float, new_E:float, new_I:float):
                 self.length = new_length
+                self.materials["E"] = new_E
+                self.materials["I"] = new_I
                 # Check if existing supports are still valid with the new length
-                self.check_valid_supports()
+                self._check_valid_elements()
+                self.solved = False
                 return True
         
         # Method to remove the most recently added support
         def remove_last_support(self):
                 if self.supports: # Check if the list is not empty
                         self.supports.pop()
+                        self.solved = False
                         return True
                 return False
+        
+        def _restart_order_of_efforts(self):
+                self.order_of_efforts = []
+                self.solved = False
+
+                for _ in self.loads:
+                        self.order_of_efforts.append("load")
+                
+                for _ in self.point_loads:
+                        self.order_of_efforts.append("point")
 
         # Method to remove the most recently added effort (load or point force)
         def remove_last_effort(self):
                 if self.order_of_efforts:
                         # Get the type of the last effort
                         last_effort = self.order_of_efforts.pop()
+                        self.solved = False
                 else:
                         return False
 
@@ -78,20 +95,32 @@ class Model():
                 return True
 
         # Method to validate supports, removing any outside the beam's length
-        def check_valid_supports(self):
+        def _check_valid_elements(self):
                 for i, (pos, _) in enumerate(self.supports):
                         if not 0 <= pos <= self.length:
                                 # Removes supports when length (L) is changed
                                 self.supports.pop(i)
+                
+                for i, ((pos1, pos2), _) in enumerate(self.loads):
+                        if not 0 <= pos1 <= self.length or not 0 <= pos2 <= self.length:
+                                self.loads.pop(i)
+                
+                for i, (_, pos, _) in enumerate(self.point_loads):
+                        if not 0 <= pos <= self.length:
+                                self.point_loads.pop(i)
+                
+                self._restart_order_of_efforts()
                                 
         # Method to set the total number of nodes for calculations
         def set_total_node_num(self, new_node_num:int):
                 self.total_node_num = new_node_num
+                self.solved = False
                 return True
 
         # Method to add a new support to the beam
         def add_support(self, position:float, support_type:str):
                 self.supports.append((position, support_type))
+                self.solved = False
                 return True
 
         # Method to add a concentrated (point) load
@@ -104,6 +133,7 @@ class Model():
                 if 0 <= position <= self.length:
                         self.point_loads.append((magnitude, position, angle))
                         self.order_of_efforts.append("point")
+                        self.solved = False
                         return True
                 return False
         
@@ -114,48 +144,52 @@ class Model():
 
                 self.loads.append(((pos0, pos1), magnitude))
                 self.order_of_efforts.append("load")
+                self.solved = False
                 return True
 
         def solve_FDM(self):
-                try:
-                        # 1. Initialization
-                        N = self.total_node_num
-                        h = self.length / (N - 1)  # Step size
-                        E = self.materials["E"]
-                        I = self.materials["I"]
+                if not self.solved:
+                        try:
+                                # 1. Initialization
+                                N = self.total_node_num
+                                h = self.length / (N - 1)  # Step size
+                                E = self.materials["E"]
+                                I = self.materials["I"]
 
-                        # 2. Assemble the stiffness matrix and force vector
-                        K = self._build_stiffness_matrix(N)
-                        F = self._build_load_vector(N, h)
+                                # 2. Assemble the stiffness matrix and force vector
+                                K = self._build_stiffness_matrix(N)
+                                F = self._build_load_vector(N, h)
 
-                        # 3. Add boundaries
-                        K, F = self._apply_boundary_conditions(K, F, N, h)
-                        F_scaled = F * (h**4 / (E * I))
-                        v = np.linalg.solve(K, F_scaled) # v is the deflection vector
+                                # 3. Add boundaries
+                                K, F = self._apply_boundary_conditions(K, F, N, h)
+                                F_scaled = F * (h**4 / (E * I))
+                                v = np.linalg.solve(K, F_scaled) # v is the deflection vector
 
-                        # 4. Calculate and store results
-                        self.node_positions = np.linspace(0, self.length, N)
-                        self.deflections = v
-                        self.slopes = np.gradient(v, h)
+                                # 4. Calculate and store results
+                                self.node_positions = np.linspace(0, self.length, N)
+                                self.deflections = v
+                                self.slopes = np.gradient(v, h)
 
-                        # Moment M = E*I*v''
-                        self.moments = E * I * np.gradient(self.slopes, h)
+                                # Moment M = E*I*v''
+                                self.moments = E * I * np.gradient(self.slopes[2:-3], h)
 
-                        # Shear V = E*I*v'''
-                        self.shears = np.gradient(self.moments, h)
-                        self.shears[0] = self.shears[1]
-                        self.shears[-1] = self.shears[-2]
+                                # Shear V = E*I*v'''
+                                self.shears = np.gradient(self.moments, h)
+                                self.shears[0] = self.shears[1]
+                                self.shears[-1] = self.shears[-2]
 
-                        # Normal force (simplified calculation)
-                        # self.normals = self._calculate_normal_force(N, h)
-                        # to do
-                        return True
-                except np.linalg.LinAlgError as e:
-                        print(f"Beam may be unstable: {e}")
-                        return False
-                # except Exception as e:
-                #         print(e)
-                #         return False
+                                # Normal force (simplified calculation)
+                                # self.normals = self._calculate_normal_force(N, h)
+                                # to do
+
+                                self.solved = True
+                                return True
+                        except np.linalg.LinAlgError as e:
+                                print(f"Beam may be unstable: {e}")
+                                return False
+                        except Exception as e:
+                                print(e)
+                                return False
 
         def _get_node_by_pos(self, pos, h) -> int:
                 N = self.total_node_num
@@ -220,11 +254,11 @@ class Model():
                                         #       Angle = 0 -> w_-1 = w_1
                                         #       Shear = 0 -> w_-2 = w_2
                                         K[j, :] = 0
-                                        if j <= N //2:
-                                                
-                                                K[j, j: j+3] = [6, -8, 2]
+                                        if j <= N // 2:
+                                                K[j, j:j+3] = [6, -8, 2]
                                         else:
-                                                K[j, j-2: j+1] = [2, -8, 6]
+                                                K[j, j-2:j+1] = [2, -8, 6]
+
                                 case "yz":
                                         # Stencil is defined by:
                                         #       Deflection = 0 -> w_0 = 0
@@ -440,7 +474,7 @@ class Pencil():
                                 end_pos=(x0 + 2 * height/ratio, y0 - height),
                                 num_circles=6,
                                 width=self.line_width//1.5,
-                                fill=self.sup_fill,
+                                fill="white",
                                 canvas=canvas
                         )
 
@@ -551,7 +585,7 @@ class Pencil():
 
                 # Write the magnitude of the distributed load
                 canvas.create_text(
-                        (x0 + abs(x0 - x1) / 2, self.view.beam_y - draw_height * (7/6)),
+                        (x0 + abs(x0 - x1) / 2, self.view.beam_y - draw_height * (1.5)),
                         text = f"{abs(magnitude):.2f}",
                         fill = self.eff_fill, 
                         font = f"TkDefaultFont {int(height / 3)}"
@@ -592,7 +626,7 @@ class View(tk.Tk):
 
         # Helper function to create a separator with a title
         def create_separator(self, frame, text, side = "top", pady=12):
-                ttk.Separator(frame).pack(fill="x", pady=12, side="top")
+                ttk.Separator(frame).pack(fill="x", pady=3, side="top")
                 if text is not None:
                         ttk.Label(
                                 frame,
@@ -649,28 +683,70 @@ class View(tk.Tk):
         # Creates the GUI elements for setting the beam length
         def length_gui(self):
                 # length section
-                self.create_separator(self.control_frame, text=None, pady=3)
+                self.create_separator(self.control_frame, text="Beam Properties", pady=3)
 
-                # frame for sideways packing
+                # frames for sideways packing
                 len_frame = ttk.Frame(self.control_frame)
-                len_frame.pack(pady=3)
+                E_frame = ttk.Frame(self.control_frame)
+                I_frame = ttk.Frame(self.control_frame)
+
+                
+                len_frame.pack(pady=1)
+                E_frame.pack(pady=1)
+                I_frame.pack(pady=1)
+
+                self.len_var = tk.StringVar(value="10.0")
+                self.E_var = tk.StringVar(value='2e11')
+                self.I_var = tk.StringVar(value=self.controller.model.materials["I"])
 
                 # Length input
                 ttk.Label(
                         len_frame,
-                        text="Length",
-                        font=self.font
+                        text="Length (m)",
+                        font=self.font,
+                        width=10
                 ).pack(side="left")
-                self.len_var = tk.StringVar(value="10.0")
+
                 ttk.Entry(
                         len_frame,
                         textvariable=self.len_var
                 ).pack(fill="x", side="left")
 
+                # E input
+                ttk.Label(
+                        E_frame,
+                        text="Set E (Pa)",
+                        font=self.font,
+                        width=10
+                ).pack(side="left")
+                
+                ttk.Entry(
+                        E_frame,
+                        textvariable=self.E_var
+                ).pack(fill="x", side="left")
+
+                # I input
+                ttk.Label(
+                        I_frame,
+                        text="Set I (m^4)",
+                        font=self.font,
+                        width=10
+                ).pack(side="left")
+                
+                ttk.Entry(
+                        I_frame,
+                        textvariable=self.I_var
+                ).pack(fill="x", side="left")
+                
+                # Button for update beam
                 ttk.Button(
                         self.control_frame,
-                        text="Set Length (m)",
-                        command=lambda: self.controller.set_length(self.len_var.get())
+                        text="Update Beam",
+                        command=lambda: self.controller.update_beam_properties(
+                                self.len_var.get(),
+                                self.E_var.get(),
+                                self.I_var.get()
+                        )
                 ).pack(pady=2)
 
         # Creates the GUI elements for adding/removing supports
@@ -744,10 +820,8 @@ class View(tk.Tk):
                 # Title for the loads section
                 title_load_frame = ttk.Frame(self.control_frame, width=250)
                 title_load_frame.pack()
-                self.create_separator(title_load_frame, "Forces & Loads", side="left")
+                self.create_separator(title_load_frame, "Forces & Loads")
 
-                # A placeholder help button
-                ttk.Button(title_load_frame, text="?", command=None, width=1).pack(side="left")
 
                 # Frames for input fields
                 line1 = tk.Frame(self.control_frame)
@@ -806,40 +880,30 @@ class View(tk.Tk):
                 self.nodes_strgvar = tk.StringVar(value="30")
                 ttk.Entry(line1, textvariable=self.nodes_strgvar, width = 12).pack(side="left")
 
-                # Solve button (command not yet implemented)
-                solve_button = ttk.Button(self.control_frame, text="Solve", command=self.controller.solve_button_clicked)
-                solve_button.pack(pady=2)
-
                 self.after_solve_frame = ttk.Frame(self.control_frame)
                 self.after_solve_frame.pack(pady=3)
 
-        def destroy_after_solve_gui(self):
-                for widget in self.after_solve_frame.winfo_children():
-                        widget.destroy()
-
-        def after_solve_gui(self):
-                self.destroy_after_solve_gui()
-
-                # See Normal 
-                ttk.Button(
-                        self.after_solve_frame,
-                        text="Normal",
-                        command=None
-                ).grid(row=0, column=0, padx=2, pady=2)
-
-                # See Slice 
+                # See Shear 
                 ttk.Button(
                         self.after_solve_frame,
                         text="Shear",
                         command=lambda: self.controller.view_graph_button_clicked("shear")
-                ).grid(row=0, column=1, padx=2, pady=2)
+                ).grid(row=0, column=0, padx=2, pady=2)
 
                 # See Moment 
                 ttk.Button(
                         self.after_solve_frame,
                         text="Moment",
                         command=lambda: self.controller.view_graph_button_clicked("moment")
+                ).grid(row=0, column=1, padx=2, pady=2)
+
+                # See Slopes 
+                ttk.Button(
+                        self.after_solve_frame,
+                        text="Slopes",
+                        command=lambda: self.controller.view_graph_button_clicked("slope")
                 ).grid(row=1, column=0, padx=2, pady=2)
+
 
                 # See Deflection
                 ttk.Button(
@@ -848,8 +912,10 @@ class View(tk.Tk):
                         command=lambda: self.controller.view_graph_button_clicked("deflection")
                 ).grid(row=1, column=1, padx=2, pady=2)
 
+
         def _on_mouse_wheel(self, event):
-                self.terminal_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                if not self.view_solution: # only valid for terminal
+                        self.terminal_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def add_terminal_message(self, message):
                 self.terminal_messages.append(message)
@@ -862,8 +928,11 @@ class View(tk.Tk):
                         case "moment":
                                 return np.array([-1*i for i in self.controller.model.moments]) 
                                 # multiply by -1 for drawing 
-                        case "shear":
+                        case "shear":                                
                                 return self.controller.model.shears
+                        
+                        case "slope":
+                                return self.controller.model.slopes
                         
         def _on_terminal_click(self, event):
                 if self.view_solution:
@@ -896,7 +965,7 @@ class View(tk.Tk):
                                 text=f"x = {beam_x:.2f}\ny = {beam_y:.5e}",
                                 fill="blue", font=("Arial", 10),
                                 tags="coord_text",
-                                anchor="w" if beam_x <= model.length / 2 else "e"
+                                anchor="w" if beam_x != model.length else "e"
                         )
 
         def draw_terminal_messages(self):
@@ -1043,25 +1112,37 @@ class Controller():
                 self.view.mainloop()
         
                 # Handles the "Set Length" button click
-        def set_length(self, new_length):
-                # Validate the input
-                test, new_length = self.test_float(new_length, "Length")
+        def update_beam_properties(self, new_length, new_E, new_I):
+                # Validate the inputs
+                test1, new_length = self.test_float(new_length, "Length")
+                test2, new_E = self.test_float(new_E, "E")
+                test3, new_I = self.test_float(new_I, "I")
             
-                if not test:
-                        return False
-
-                if new_length == self.model.length:
-                        self.add_terminal_message(f"Error: Length of {new_length} already set")
+                if not (test1 and test2 and test3):
                         return False
             
                 elif new_length <= 0:
                         self.add_terminal_message(f"Error: Length must be greater than '0'!")
                         return False
-            
-                # If the model successfully sets the length, update the view
-                if self.model.set_length(new_length):
+                
+                elif new_E <= 0 or new_I <= 0:
+                        self.add_terminal_message(f"Error: E and I must be greater than '0'!")
+                        return False
+
+                if not new_length == self.model.length:
                         self.add_terminal_message(f"New Length set to:{new_length}")
+
+                if not new_E == self.model.materials["E"]:
+                        self.add_terminal_message(f"New E set to:{new_E}")
+
+                if not new_I == self.model.materials["I"]:
+                        self.add_terminal_message(f"New I set to:{new_I}")
+
+                # If the model successfully sets the length, update the view
+                if self.model.set_properties(new_length, new_E, new_I):
+                        self.update_display()
                         return True
+                
                 return False
 
         # Sets the total number of nodes for the simulation
@@ -1086,31 +1167,35 @@ class Controller():
         # Handles the "Add Support" button click
         def add_support(self, position, support_type):
                 # Validate the position input is floatable
-                test, position = self.test_float(position, "Position")
-
-                if not test:
-                        return False
-            
-                # check if position is within the beam's length
-                if not 0 <= position <= self.model.length:
-                        self.add_terminal_message(f"Error: Support position must be inside beam!")
-                        return False
-
-                # check if new support is too close to an existing one
-                for already_saved_position, _ in self.model.supports:
-                        if abs(position - already_saved_position) <= self.model.length / self.model.total_node_num:
-                                self.add_terminal_message(f"Error: Cannot add support too close to another one!")
+                positions = []
+                for position in position.split(";"):
+                        test, position = self.test_float(position, "Position")
+                        if not test:
                                 return False
-            
-                # Check if the support type is valid/implemented
-                if support_type not in self.view.pencil.mapper:
-                        self.add_terminal_message(f"Error: Support kind '{support_type}' not yet implemented!")
-                        return False
-            
-                # If the model successfully adds the support, update the view
-                if self.model.add_support(position, support_type):
-                        self.add_terminal_message(f"New support {support_type} added to:{position}")
-                        return True
+                        
+                        positions.append(position)
+
+                for position in positions:
+                        # check if position is within the beam's length
+                        if not 0 <= position <= self.model.length:
+                                self.add_terminal_message(f"Error: Support position must be inside beam!")
+                                return False
+
+                        # check if new support is too close to an existing one
+                        for already_saved_position, _ in self.model.supports:
+                                if abs(position - already_saved_position) <= self.model.length / self.model.total_node_num:
+                                        self.add_terminal_message(f"Error: Cannot add support too close to another one!")
+                                        return False
+                
+                        # Check if the support type is valid/implemented
+                        if support_type not in self.view.pencil.mapper:
+                                self.add_terminal_message(f"Error: Support kind '{support_type}' not yet implemented!")
+                                return False
+                
+                        # If the model successfully adds the support, update the view
+                        if self.model.add_support(position, support_type):
+                                self.add_terminal_message(f"New support {support_type} added to:{position}")
+                                continue
             
                 return False
 
@@ -1205,12 +1290,12 @@ class Controller():
                 if not self.set_total_node_num(self.view.nodes_strgvar.get()):
 
                         return False
-                self.view.after_solve_gui()
+                self.add_terminal_message(f"SOLVING FOR {self.model.total_node_num} NODES...")
+                
+
                 self.model.solve_FDM()
 
-                open("data.py", "w").write(f"import numpy as np\ndeflection = {str([i for i in self.model.deflections])}")
                 self.update_display()
-                # temp
                 self.view.draw_solved_beam()
 
                 return True
