@@ -133,14 +133,19 @@ class Model():
                         F_scaled = F * (h**4 / (E * I))
                         v = np.linalg.solve(K, F_scaled) # v is the deflection vector
 
-                        # 5. Calculate and store results
+                        # 4. Calculate and store results
                         self.node_positions = np.linspace(0, self.length, N)
                         self.deflections = v
                         self.slopes = np.gradient(v, h)
+
                         # Moment M = E*I*v''
                         self.moments = E * I * np.gradient(self.slopes, h)
+
                         # Shear V = E*I*v'''
-                        self.shears = E * I * np.gradient(self.moments, h)
+                        self.shears = np.gradient(self.moments, h)
+                        self.shears[0] = self.shears[1]
+                        self.shears[-1] = self.shears[-2]
+
                         # Normal force (simplified calculation)
                         # self.normals = self._calculate_normal_force(N, h)
                         # to do
@@ -381,7 +386,7 @@ class Pencil():
                         polygon_points = [p0, (x0, y0 - height), (x0 + height/ratio, y0 - height), (x0 + height/ratio, y0 + height), (x0, y0 + height), p0]
                         draw_lines = "right"
                 else: # Draw in the middle
-                        polygon_points = [(x0 - height/(2*ratio), y0 - height), (x0 - height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 - height)]
+                        polygon_points = [(x0 - height/(ratio), y0 - height), (x0 - height/(ratio), y0 + height), (x0 + height/(ratio), y0 + height), (x0 + height/(ratio), y0 - height)]
                         draw_lines = False 
                 # Draw the main rectangle of the support
                 canvas.create_polygon(*polygon_points, width = self.line_width, fill=self.sup_fill)
@@ -421,7 +426,8 @@ class Pencil():
                                 end_pos=(x0 - 2 * height/ratio, y0 - height),
                                 num_circles=6,
                                 width=self.line_width//1.5,
-                                fill=self.sup_fill 
+                                fill=self.sup_fill,
+                                canvas=canvas
                         )
                 elif abs(beam_position - beam_length) < episilon: # Draw on the right
                         polygon_points = [p0, (x0, y0 - height), (x0 + height/ratio, y0 - height), (x0 + height/ratio, y0 + height), (x0, y0 + height), p0]
@@ -434,12 +440,27 @@ class Pencil():
                                 end_pos=(x0 + 2 * height/ratio, y0 - height),
                                 num_circles=6,
                                 width=self.line_width//1.5,
-                                fill=self.sup_fill 
+                                fill=self.sup_fill,
+                                canvas=canvas
                         )
 
                 else: # Draw in the middle
-                        polygon_points = [(x0 - height/(2*ratio), y0 - height), (x0 - height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 + height), (x0 + height/(2*ratio), y0 - height)]
-                        draw_lines = False 
+                        
+                        polygon1_points = [(x0  - height/(ratio), y0 - height), (x0  - height/(ratio), y0 + height), (x0  - 1.5 * height/(ratio), y0 + height), (x0  - 1.5 * height/(ratio), y0 - height)]
+                        polygon2_points = [(x0  + height/(ratio), y0 - height), (x0  + height/(ratio), y0 + height), (x0  + 1.5 * height/(ratio), y0 + height), (x0  + 1.5 * height/(ratio), y0 - height)]
+                        
+                        canvas.create_polygon(*polygon1_points, width = self.line_width, fill=self.sup_fill)
+                        canvas.create_polygon(*polygon2_points, width = self.line_width, fill=self.sup_fill)
+
+                        self._draw_circles_along_line(
+                                start_pos=(x0, y0 + height),
+                                end_pos=(x0, y0 - height),
+                                num_circles=6,
+                                width=self.line_width//1.5,
+                                fill=self.sup_fill,
+                                canvas=canvas
+                        )
+                        
         
         # Draws a point load (arrow) on the beam
         def draw_point_load(self, beam_position:float, height:float, magnitude:float, canvas:tk.Canvas, angle:float = 90, literal_coords = False, write = True):
@@ -810,21 +831,21 @@ class View(tk.Tk):
                 ttk.Button(
                         self.after_solve_frame,
                         text="Shear",
-                        command=None
+                        command=lambda: self.controller.view_graph_button_clicked("shear")
                 ).grid(row=0, column=1, padx=2, pady=2)
 
                 # See Moment 
                 ttk.Button(
                         self.after_solve_frame,
                         text="Moment",
-                        command=None
+                        command=lambda: self.controller.view_graph_button_clicked("moment")
                 ).grid(row=1, column=0, padx=2, pady=2)
 
                 # See Deflection
                 ttk.Button(
                         self.after_solve_frame,
                         text="Deflection",
-                        command=None
+                        command=lambda: self.controller.view_graph_button_clicked("deflection")
                 ).grid(row=1, column=1, padx=2, pady=2)
 
         def _on_mouse_wheel(self, event):
@@ -838,6 +859,11 @@ class View(tk.Tk):
                 match self.solution_mode:
                         case "deflection":
                                 return self.controller.model.deflections
+                        case "moment":
+                                return np.array([-1*i for i in self.controller.model.moments]) 
+                                # multiply by -1 for drawing 
+                        case "shear":
+                                return self.controller.model.shears
                         
         def _on_terminal_click(self, event):
                 if self.view_solution:
@@ -867,9 +893,10 @@ class View(tk.Tk):
                         # Display value on canvas
                         self.terminal_canvas.create_text(
                                 click_x, click_y - 10,  # slight offset above cursor
-                                text=f"x = {beam_x:.2f}\n y = {beam_y:.5e}",
+                                text=f"x = {beam_x:.2f}\ny = {beam_y:.5e}",
                                 fill="blue", font=("Arial", 10),
-                                tags="coord_text"
+                                tags="coord_text",
+                                anchor="w" if beam_x <= model.length / 2 else "e"
                         )
 
         def draw_terminal_messages(self):
@@ -1002,201 +1029,218 @@ class View(tk.Tk):
 
 # This class acts as the controller (in the MVC pattern), handling user input and updating the model and view
 class Controller():
-    # Initialize the controller
-    def __init__(self):
-            # Create instances of the model and view
-            self.model = Model()
-            self.view = View(self)
-
-            # When the canvas is resized, call the update_display method
-            self.view.maincanvas.bind("<Configure>", self.update_display)
-
-    # Starts the main event loop of the application
-    def run(self):
-            self.view.mainloop()
-    
-    # Handles the "Set Length" button click
-    def set_length(self, new_length):
-            # Validate the input
-            test, new_length = self.test_float(new_length, "Length")
-            
-            if not test:
-                    return False
-
-            if new_length == self.model.length:
-                    self.add_terminal_message(f"Error: Length of {new_length} already set")
-                    return False
-            
-            elif new_length <= 0:
-                    self.add_terminal_message(f"Error: Length must be greater than '0'!")
-                    return False
-            
-            # If the model successfully sets the length, update the view
-            if self.model.set_length(new_length):
-                    self.add_terminal_message(f"New Length set to:{new_length}")
-                    return True
-            return False
-
-    # Sets the total number of nodes for the simulation
-    def set_total_node_num(self, new_node_num):
-            test, new_node_num = self.test_float(new_node_num, "N° Nodes", test_int = True)
-    
-            if not test:
-                    return False
-
-            if new_node_num == self.model.total_node_num:
-                    return False
-            
-            if self.model.set_total_node_num(new_node_num):
-                    self.add_terminal_message(f"N° Nodes set to {new_node_num}")
-                    return True
-            return False
-
-    # Handles the "Add Support" button click
-    def add_support(self, position, support_type):
-            # Validate the position input is floatable
-            test, position = self.test_float(position, "Position")
-
-            if not test:
-                    return False
-            
-            # check if position is within the beam's length
-            if not 0 <= position <= self.model.length:
-                    self.add_terminal_message(f"Error: Support position must be inside beam!")
-                    return False
-
-            # check if new support is too close to an existing one
-            for already_saved_position, _ in self.model.supports:
-                    if abs(position - already_saved_position) <= self.model.length / self.model.total_node_num:
-                                    self.add_terminal_message(f"Error: Cannot add support too close to another one!")
-                                    return False
-            
-            # Check if the support type is valid/implemented
-            if support_type not in self.view.pencil.mapper:
-                    self.add_terminal_message(f"Error: Support kind '{support_type}' not yet implemented!")
-                    return False
-            
-            # If the model successfully adds the support, update the view
-            if self.model.add_support(position, support_type):
-                    self.add_terminal_message(f"New support {support_type} added to:{position}")
-                    return True
-            
-            return False
-
-    # Handles the "Remove Support" button click
-    def remove_last_support(self):
-            # If the model successfully removes a support, update the view
-            if self.model.remove_last_support():
-                    self.add_terminal_message("Support Removed.")
-                    return True
-            return False
-
-    # Handles the "Add Force" button click
-    def add_effort(self, magnitude:float, position, angle:float = 90):
-            # test magnitude and angle
-            test1, magnitude = self.test_float(magnitude, "Magnitude")
-            test2, angle = self.test_float(angle, "Angle")
-            
-            if not (test1 and test2):
-                    return False
-            
-            if magnitude == 0:
-                    self.add_terminal_message("Error: Magnitude cannot be '0'")
-                    return False
-
-            # Check if the position input is for a distributed load (e.g., "2;5")
-            if ";" in position:
-                    pos0, pos1 = position.split(";")[:2]
-
-                    test0, pos0 = self.test_float(pos0, "Position 1")
-                    test1, pos1 = self.test_float(pos1, "Position 2")
-                    
-                    if not (test0 and test1):
-                            return False
-
-                    if pos1 < pos0:
-                            pos0, pos1 = pos1, pos0
-                    
-                    if (not 0 <= pos0 <= self.model.length) or (not 0 <= pos1 <= self.model.length):
-                            self.add_terminal_message("Error: Position must be inside beam!")
-                            return False
-            
-            # Otherwise, it's a point load
-            else:
-                    test, pos0 = self.test_float(position, "Position")
-                    pos1 = None
-                    
-                    if not test:
-                            return False
-
-                    if not 0 <= pos0 <= self.model.length:
-                            self.add_terminal_message("Error: Position must be inside beam!")
-                            return False
-            
-            # If pos1 is None, it's a point load
-            if pos1 is None:
-                    # If the model adds the point load, update the display
-                    if self.model.add_point_load(magnitude=magnitude, position=pos0, angle=angle):
-                            if angle == 90:
-                                    self.add_terminal_message(f"New force {magnitude} added to: {position}")
-                                    return True
-                            self.add_terminal_message(f"New force ({magnitude}>{angle}°) added to: {position}")
-                            return True
-                    return False
-
-            # If pos1 is valid, it's a distributed load
-            if self.model.add_loads(pos_limits=(pos0, pos1), magnitude=magnitude):
-                    self.add_terminal_message(f"New load {magnitude} added from {pos0} to {pos1}")
-                    return True
-            return False
-
-    # Handles the "Remove Force" button click
-    def remove_last_effort(self):
-            # If the model successfully removes an effort, update the view
-            if self.model.remove_last_effort():
-                    self.view.add_terminal_message("Effort Removed.")
-                    self.update_display()
-                    return True
-            return False
-
-    # Handles the "Solve" button click
-    def solve_button_clicked(self):
-            if not self.model.supports or len(self.model.loads) + len(self.model.point_loads) == 0:
-                    self.add_terminal_message(f"You cannot solve a beam without supports")
-                    return False
-
-            self.set_total_node_num(self.view.nodes_strgvar.get())
-            self.view.after_solve_gui()
-            self.model.solve_FDM()
-            open("data.py", "w").write(f"import numpy as np\ndeflection = {str([i for i in self.model.deflections])}")
-            self.update_display()
-            # temp
-            self.view.draw_solved_beam()
-
-            return True
-
-    # This method is called to refresh the drawing on the canvas
-    def update_display(self, event=None):
-            self.view.update_display()
-    
-    # Adds a message to the view's terminal display
-    def add_terminal_message(self, message:str):
-            self.view.add_terminal_message(message)
-            self.update_display()
-
-    # Tests if a variable can be converted to a float or integer
-    def test_float(self, var, var_name="input", test_int = False): # worked, var
-            try:
-                    if not test_int:
-                            var = float(var)
-                            return True, var
-                    var = int(var)
-                    return True, var
-            except (ValueError, TypeError):
-                    self.add_terminal_message(f"Error: Invalid value for {var_name}: '{var}'")
-                    return False, None
-
+        # Initialize the controller
+        def __init__(self):
+                # Create instances of the model and view
+                self.model = Model()
+                self.view = View(self)
         
+                # When the canvas is resized, call the update_display method
+                self.view.maincanvas.bind("<Configure>", self.update_display)
+        
+        # Starts the main event loop of the application
+        def run(self):
+                self.view.mainloop()
+        
+                # Handles the "Set Length" button click
+        def set_length(self, new_length):
+                # Validate the input
+                test, new_length = self.test_float(new_length, "Length")
+            
+                if not test:
+                        return False
+
+                if new_length == self.model.length:
+                        self.add_terminal_message(f"Error: Length of {new_length} already set")
+                        return False
+            
+                elif new_length <= 0:
+                        self.add_terminal_message(f"Error: Length must be greater than '0'!")
+                        return False
+            
+                # If the model successfully sets the length, update the view
+                if self.model.set_length(new_length):
+                        self.add_terminal_message(f"New Length set to:{new_length}")
+                        return True
+                return False
+
+        # Sets the total number of nodes for the simulation
+        def set_total_node_num(self, new_node_num):
+                test, new_node_num = self.test_float(new_node_num, "N° Nodes", test_int = True)
+    
+                if not test:
+                        return False
+
+                if new_node_num == self.model.total_node_num:
+                        return True
+
+                if new_node_num < 10:
+                        self.add_terminal_message("N° Nodes must be higher than 9.")
+                        return False
+            
+                if self.model.set_total_node_num(new_node_num):
+                        self.add_terminal_message(f"N° Nodes set to {new_node_num}")
+                        return True
+                return False
+
+        # Handles the "Add Support" button click
+        def add_support(self, position, support_type):
+                # Validate the position input is floatable
+                test, position = self.test_float(position, "Position")
+
+                if not test:
+                        return False
+            
+                # check if position is within the beam's length
+                if not 0 <= position <= self.model.length:
+                        self.add_terminal_message(f"Error: Support position must be inside beam!")
+                        return False
+
+                # check if new support is too close to an existing one
+                for already_saved_position, _ in self.model.supports:
+                        if abs(position - already_saved_position) <= self.model.length / self.model.total_node_num:
+                                self.add_terminal_message(f"Error: Cannot add support too close to another one!")
+                                return False
+            
+                # Check if the support type is valid/implemented
+                if support_type not in self.view.pencil.mapper:
+                        self.add_terminal_message(f"Error: Support kind '{support_type}' not yet implemented!")
+                        return False
+            
+                # If the model successfully adds the support, update the view
+                if self.model.add_support(position, support_type):
+                        self.add_terminal_message(f"New support {support_type} added to:{position}")
+                        return True
+            
+                return False
+
+        # Handles the "Remove Support" button click
+        def remove_last_support(self):
+                # If the model successfully removes a support, update the view
+                if self.model.remove_last_support():
+                        self.add_terminal_message("Support Removed.")
+                        return True
+                return False
+
+        # Handles the "Add Force" button click
+        def add_effort(self, magnitude:float, position, angle:float = 90):
+                # test magnitude and angle
+                test1, magnitude = self.test_float(magnitude, "Magnitude")
+                test2, angle = self.test_float(angle, "Angle")
+            
+                if not (test1 and test2):
+                        return False
+            
+                if magnitude == 0:
+                        self.add_terminal_message("Error: Magnitude cannot be '0'")
+                        return False
+
+                # Check if the position input is for a distributed load (e.g., "2;5")
+                if ";" in position:
+                        pos0, pos1 = position.split(";")[:2]
+
+                        test0, pos0 = self.test_float(pos0, "Position 1")
+                        test1, pos1 = self.test_float(pos1, "Position 2")
+                    
+                        if not (test0 and test1):
+                                return False
+
+                        if pos1 < pos0:
+                                pos0, pos1 = pos1, pos0
+                    
+                        if (not 0 <= pos0 <= self.model.length) or (not 0 <= pos1 <= self.model.length):
+                                self.add_terminal_message("Error: Position must be inside beam!")
+                                return False
+            
+                # Otherwise, it's a point load
+                else:
+                        test, pos0 = self.test_float(position, "Position")
+                        pos1 = None
+                    
+                        if not test:
+                                return False
+
+                        if not 0 <= pos0 <= self.model.length:
+                                self.add_terminal_message("Error: Position must be inside beam!")
+                                return False
+            
+
+                # If pos1 is None, it's a point load
+                if pos1 is None:
+                        # If the model adds the point load, update the display
+                        if self.model.add_point_load(magnitude=magnitude, position=pos0, angle=angle):
+                                if angle == 90:
+                                        self.add_terminal_message(f"New force {magnitude} added to: {position}")
+                                        return True
+                                self.add_terminal_message(f"New force ({magnitude}>{angle}°) added to: {position}")
+                                return True
+                        return False
+
+                # If pos1 is valid, it's a distributed load
+                if self.model.add_loads(pos_limits=(pos0, pos1), magnitude=magnitude):
+                        self.add_terminal_message(f"New load {magnitude} added from {pos0} to {pos1}")
+                        return True
+                return False
+
+        # Handles the "Remove Force" button click
+        def remove_last_effort(self):
+                # If the model successfully removes an effort, update the view
+                if self.model.remove_last_effort():
+                        self.view.add_terminal_message("Effort Removed.")
+                        self.update_display()
+                        return True
+                return False
+
+        # Handles the "Solve" button click
+        def solve_button_clicked(self):
+                
+                if not self.model.supports:
+                        self.add_terminal_message(f"Error: You cannot solve a beam without supports")
+                        return False
+
+                if len(self.model.loads) + len(self.model.point_loads) == 0:
+                        self.add_terminal_message(f"Error: You cannot solve a beam without loads")
+                        return False
+
+                if not self.set_total_node_num(self.view.nodes_strgvar.get()):
+
+                        return False
+                self.view.after_solve_gui()
+                self.model.solve_FDM()
+
+                open("data.py", "w").write(f"import numpy as np\ndeflection = {str([i for i in self.model.deflections])}")
+                self.update_display()
+                # temp
+                self.view.draw_solved_beam()
+
+                return True
+        
+        def view_graph_button_clicked(self, mode:str):
+                self.view.solution_mode = mode
+
+                self.solve_button_clicked()
+
+        # This method is called to refresh the drawing on the canvas
+        def update_display(self, event=None):
+                self.view.update_display()
+    
+        # Adds a message to the view's terminal display
+        def add_terminal_message(self, message:str):
+                self.view.add_terminal_message(message)
+                self.update_display()
+
+        # Tests if a variable can be converted to a float or integer
+        def test_float(self, var, var_name="input", test_int = False): # worked, var
+                try:
+                        if not test_int:
+                                var = float(var)
+                                return True, var
+                        var = int(var)
+                        return True, var
+                except (ValueError, TypeError):
+                        self.add_terminal_message(f"Error: Invalid value for {var_name}: '{var}'")
+                        return False, None
+
 
 
 
